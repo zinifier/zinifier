@@ -1,14 +1,10 @@
 use camino::Utf8Path;
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 // use typst::foundations::{Repr, Value as TypstValue};
 
 use std::collections::HashMap;
 
-use crate::{
-    theme::Theme,
-    typ::typst_escape,
-    zine::ZineFile
-};
+use crate::{theme::Theme, typ::typst_escape, zine::ZineFile};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct FrontMatter {
@@ -75,10 +71,13 @@ impl FrontMatter {
             for (k, v) in theme_settings.iter() {
                 let typst_value = if k.ends_with("_color") {
                     format!("rgb(\"{v}\")")
-                } else if k.ends_with("_size") {
+                } else if k.ends_with("_size") || k.ends_with("_spacing") || k == "debug" {
                     format!("{v}")
                 } else if k.ends_with("_res") {
-                    format!("\"{}\"", theme.zine_resource_relative_from_theme(v.as_str(), zine))
+                    format!(
+                        "\"{}\"",
+                        theme.zine_resource_relative_from_theme(v.as_str(), zine)
+                    )
                 } else {
                     format!("\"{v}\"")
                 };
@@ -102,12 +101,12 @@ impl FrontMatter {
     pub fn with_typst_header(&self, zine: &ZineFile, theme: &Theme) -> String {
         let relative_theme_path = theme.relative_to_zine(zine);
         debug!("Using import theme: {relative_theme_path}");
-        
+
         let mut out = String::new();
         out.push_str("#import \"");
         // out.push_str(theme.theme_relative().as_str());
         out.push_str(relative_theme_path.as_str());
-        out.push_str("\": zine, quoted");
+        out.push_str("\": *");
         out.push_str("\n#show: zine.with(");
 
         for line in self.to_typst(zine, theme).lines() {
@@ -123,7 +122,10 @@ impl FrontMatter {
 pub fn split_frontmatter(file: &Utf8Path) -> (FrontMatter, String) {
     let content = std::fs::read_to_string(file).unwrap();
 
-    let (toml_content, markdown_content) = content.trim_start_matches("+++").split_once("\n+++").unwrap();
+    let (toml_content, markdown_content) = content
+        .trim_start_matches("+++")
+        .split_once("\n+++")
+        .unwrap();
     let frontmatter = toml::from_str(&toml_content).unwrap();
 
     (frontmatter, markdown_content.to_string())

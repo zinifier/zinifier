@@ -1,20 +1,18 @@
 // use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd, TextMergeStream};
-use markdown_it::{MarkdownIt, NodeValue, Node, Renderer};
-use markdown_it::parser::{
-    inline::*,
-    block::*,
-};
+use markdown_it::parser::{block::*, inline::*};
 use markdown_it::plugins::cmark::{
-    block::{
-        heading::ATXHeading,
-        paragraph::Paragraph,
-    },
+    block::{heading::ATXHeading, paragraph::Paragraph},
     inline::{
+        emphasis::Strong,
         newline::{Hardbreak, Softbreak},
     },
 };
+use markdown_it::{MarkdownIt, Node, NodeValue, Renderer};
+use markdown_it_footnote::{
+    definitions::FootnoteDefinition, inline::InlineFootnote, references::FootnoteReference,
+};
 use markdownmacros::{
-    block::{BlockMacro, parse_block, parse_block_end},
+    block::{parse_block, parse_block_end, BlockMacro},
     // value::Value,
 };
 
@@ -23,46 +21,99 @@ use crate::typ::typst_escape;
 pub fn markdown_to_typst_content(markdown: &str) -> String {
     let md = &mut MarkdownIt::new();
     markdown_it::plugins::cmark::add(md);
+    markdown_it_footnote::add(md);
     md.block.add_rule::<BlockMacroScanner>();
 
-    let root = md.parse(markdown);
+    let mut root = md.parse(markdown);
 
     let mut out = String::new();
 
-    root.walk(|node, _| {
+    // We walk mutably so we can consume inner children
+    // However, we always need a second pass because footnotes are linear in MarkdownIt AST (first the ref, then the rest of document,
+    // then the actual footnote content).
+    let mut footnote_counter = 0;
+    // The first optional string is the label (like NdT for translation notes)
+    // If only a number is in the label, it is ignored.
+    let mut footnotes: Vec<(Option<String>, String)> = vec![];
+    // let mut footnotes: Vec<String> = vec!();
+
+    root.walk_mut(|node, _| {
         if node.is::<ATXHeading>() {
             let node: &ATXHeading = node.node_value.downcast_ref().unwrap();
             out.push_str(&"=".repeat(node.level as usize));
             out.push_str(" ");
-            // out.push_str("\n");
-        }
-        else if node.is::<Text>() {
+        } else if node.is::<Strong>() {
+            out.push_str("#strong([");
+            // TODO: maybe parse those as markdown too?
+            out.push_str(&node.collect_text());
+            // IS THIS CORRECT? Replace collected children with emptiness
+            node.children = vec![];
+            out.push_str("])")
+        } else if node.is::<Text>() {
             let node: &Text = node.node_value.downcast_ref().unwrap();
             out.push_str(&typst_escape(&node.content));
             out.push_str("\n");
-        }
-        else if node.is::<TextSpecial>() {
+        } else if node.is::<TextSpecial>() {
             let node: &TextSpecial = node.node_value.downcast_ref().unwrap();
             out.push_str(&node.markup);
-        }
-        else if node.is::<Paragraph>() {
+        } else if node.is::<Paragraph>() {
             out.push_str("\n");
-            // let node: &Paragraph = node.node_value.downcast_ref().unwrap();
             out.push_str("\n");
-            // out.push_str("\n");
-        }
-        else if node.is::<Hardbreak>() {
+        } else if node.is::<Hardbreak>() {
             out.push_str("\\\n");
-        }
-        else if node.is::<Softbreak>() {
+        } else if node.is::<Softbreak>() {
             out.push_str("\n");
-        }
-        else if node.is::<TypstMacroNode>() {
+        } else if node.is::<TypstMacroNode>() {
             let node: &TypstMacroNode = node.node_value.downcast_ref().unwrap();
-            out.push_str(&node.0);
+            // Recurse parsing markdown inside the macro
+            out.push_str(&markdown_to_typst_content(&node.0));
+        } else if node.is::<InlineFootnote>() {
+            footnote_counter += 1;
+            out.push_str(&format!("[^{}]", footnote_counter));
+        } else if node.is::<FootnoteReference>() {
+            footnote_counter += 1;
+            out.push_str(&format!("[^{}]", footnote_counter));
+        } else if node.is::<FootnoteDefinition>() {
+            let typed_node: &FootnoteDefinition = node.node_value.downcast_ref().unwrap();
+            let label = typed_node.label.to_owned();
+
+            footnotes.push((label, format!("#footnote[{}]", node.collect_text())));
+            node.children = vec![];
+        } else {
+            debug!("Unknown node type: {}", node.node_type.name);
         }
     });
-    
+
+    if footnote_counter != footnotes.len() {
+        panic!(
+            "Counted {} footnotes but found {} actual content for footnotes",
+            footnote_counter,
+            footnotes.len()
+        );
+    }
+
+    while footnote_counter > 0 {
+        let (label, content) = &footnotes[footnote_counter - 1];
+        if let Some(label) = label {
+            if let Ok(_n) = label.parse::<u8>() {
+                // Only a number, don't care about nothing
+                out = out.replace(&format!("[^{}]", footnote_counter), &content);
+            } else {
+                // Label like NdT1 extract "NdT"
+                let new_label = sanitize_label(&label);
+                out = out.replace(
+                    &format!("[^{}]", footnote_counter),
+                    &content.replace("#footnote[", &format!("#footnote[#emph[{}:] ", new_label)), // &format!("{}: {}", new_label, &content),
+                );
+            }
+        } else {
+            // No label, is that even possible?
+            // out = out.replace(&format!("[^{}]", footnote_counter), &content);
+            unreachable!();
+        }
+        footnote_counter -= 1;
+    }
+
     out
 }
 
@@ -118,7 +169,9 @@ impl BlockRule for BlockMacroScanner {
     //
     fn run(state: &mut BlockState) -> Option<(Node, usize)> {
         let line = state.get_line(state.line).trim();
-        if !line.contains("{%") { return None; }
+        if !line.contains("{%") {
+            return None;
+        }
 
         match parse_block(line) {
             Some(mut m) => {
@@ -150,11 +203,16 @@ impl BlockRule for BlockMacroScanner {
                     // n_lines,
                     1,
                 ))
-            },
+            }
             None => {
                 // It looks like a macro but isn't a macro
                 None
             }
         }
     }
+}
+
+/// Only keep non-digit characters
+pub fn sanitize_label(label: &str) -> String {
+    label.chars().filter(|c| !c.is_ascii_digit()).collect()
 }

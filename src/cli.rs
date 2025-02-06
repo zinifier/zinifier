@@ -1,31 +1,21 @@
-use camino::{Utf8PathBuf, Utf8Path};
+use camino::{Utf8Path, Utf8PathBuf};
 use clap::{Parser, ValueEnum};
 
-use crate::{compile, watch};
+use crate::{error::*, path::RootPath, typ::CompileMode, watch, zine::ZineFile};
 
 #[derive(Debug, Parser)]
 struct Cli {
     action: Action,
+    #[clap(short, long, default_value = "pdf")]
+    mode: CompileMode,
     file: Utf8PathBuf,
 }
 
 #[derive(Clone, Debug, ValueEnum)]
 pub enum Action {
     Compile,
-    #[cfg(feature="watch")]
+    #[cfg(feature = "watch")]
     Watch,
-}
-
-impl Action {
-    pub fn run(&self, root: &Utf8Path, file: &Utf8Path) {
-        let s = SourceType::from_ext(file);
-        
-        match self {
-            Self::Compile => s.compile(root, file),
-            #[cfg(feature="watch")]
-            Self::Watch => s.watch(root, file),
-        }
-    }
 }
 
 #[derive(Clone, Debug)]
@@ -45,26 +35,38 @@ impl SourceType {
         }
     }
 
-    pub fn compile(&self, root: &Utf8Path, file: &Utf8Path) {
-        match self {
-            Self::Markdown => {
-                compile::compile_md(root, file);
+    // We take a RootPath and not a simple path because we need the BaseDir context
+    // to resolve themes etc...
+    pub fn compile(&self, path: &RootPath, mode: CompileMode) -> Result<(), Error> {
+        trace!("SourceType::compile({path:?}, {mode:?})");
+
+        if path.path.is_dir() {
+            panic!("Can only compile a .md or .typ file, not folder!");
+        }
+
+        let zine = ZineFile::new(path);
+
+        let compiled_zine = match self {
+            Self::Markdown => zine.compile_md()?,
+            Self::Typst => zine.compile()?,
+        };
+
+        match mode {
+            CompileMode::Png => {
+                compiled_zine.to_png()?;
             }
-            Self::Typst => {
-                match compile::compile_typ(root, file) {
-                    Ok(_) => {
-                        info!("OK");
-                    }
-                    Err(e) => {
-                        error!("{}", e);
-                    }
-                }
+            CompileMode::Pdf => {
+                compiled_zine.to_pdf()?;
             }
         }
+
+        Ok(())
     }
 
-    #[cfg(feature="watch")]
-    pub fn watch(&self, root: &Utf8Path, file: &Utf8Path) {
-        watch::watch(self, root, file);
+    #[cfg(feature = "watch")]
+    pub fn watch(&self, path: &RootPath) -> Result<(), Error> {
+        watch::watch(self, path);
+
+        Ok(())
     }
 }
