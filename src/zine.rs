@@ -135,7 +135,7 @@ impl ZineFile {
                 &world,
                 &output.unwrap_err(),
                 &warnings,
-                DiagnosticFormat::Short,
+                DiagnosticFormat::Human,
             )
             .map_err(|err| eco_format!("failed to print diagnostics ({err})"))
             .unwrap();
