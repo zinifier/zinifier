@@ -1,7 +1,11 @@
 // use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd, TextMergeStream};
 use markdown_it::parser::{block::*, inline::*};
 use markdown_it::plugins::cmark::{
-    block::{heading::ATXHeading, paragraph::Paragraph},
+    block::{
+        heading::ATXHeading,
+        list::{BulletList, ListItem, OrderedList},
+        paragraph::Paragraph,
+    },
     inline::{
         emphasis::Strong,
         newline::{Hardbreak, Softbreak},
@@ -18,11 +22,19 @@ use markdownmacros::{
 
 use crate::typ::typst_escape;
 
+enum ListType {
+    Numbered,
+    NotNumbered,
+}
+
 pub fn markdown_to_typst_content(markdown: &str) -> String {
     let md = &mut MarkdownIt::new();
     markdown_it::plugins::cmark::add(md);
     markdown_it_footnote::add(md);
     md.block.add_rule::<BlockMacroScanner>();
+
+    // Context for the current list items
+    let mut list_type = ListType::NotNumbered;
 
     let mut root = md.parse(markdown);
 
@@ -77,8 +89,25 @@ pub fn markdown_to_typst_content(markdown: &str) -> String {
             let typed_node: &FootnoteDefinition = node.node_value.downcast_ref().unwrap();
             let label = typed_node.label.to_owned();
 
-            footnotes.push((label, format!("#footnote[{}]", node.collect_text())));
+            footnotes.push((label, format!("#footnote[{}]", &node.collect_text())));
             node.children = vec![];
+        } else if node.is::<BulletList>() {
+            list_type = ListType::NotNumbered;
+        } else if node.is::<OrderedList>() {
+            list_type = ListType::Numbered;
+        } else if node.is::<ListItem>() {
+            out.push_str("\n");
+
+            match list_type {
+                ListType::NotNumbered => {
+                    out.push_str("- ");
+                }
+                ListType::Numbered => {
+                    out.push_str("+ ");
+                }
+            }
+
+            out.push_str(&node.collect_text());
         } else {
             debug!("Unknown node type: {}", node.node_type.name);
         }
