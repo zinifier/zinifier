@@ -71,7 +71,11 @@ impl FrontMatter {
             for (k, v) in theme_settings.iter() {
                 let typst_value = if k.ends_with("_color") {
                     format!("rgb(\"{v}\")")
-                } else if k.ends_with("_size") || k.ends_with("_spacing") || k == "debug" {
+                } else if k.ends_with("_size")
+                    || k.ends_with("_spacing")
+                    || k.ends_with("_bool")
+                    || k == "debug"
+                {
                     format!("{v}")
                 } else if k.ends_with("_res") {
                     format!(
