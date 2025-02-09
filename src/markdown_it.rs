@@ -8,6 +8,7 @@ use markdown_it::plugins::cmark::{
     },
     inline::{
         emphasis::Strong,
+        image::Image,
         newline::{Hardbreak, Softbreak},
     },
 };
@@ -108,6 +109,13 @@ pub fn markdown_to_typst_content(markdown: &str) -> String {
             }
 
             out.push_str(&node.collect_text());
+        } else if node.is::<Image>() {
+            // TODO: support caption
+            // TODO: support specifying image size
+            //  for exmaple with https://stackoverflow.com/questions/14675913/changing-image-size-in-markdown/21242579#21242579
+            //  or with title https://docs.rs/markdown-it/latest/markdown_it/generics/inline/full_link/index.html
+            let typed_node: &Image = node.node_value.downcast_ref().unwrap();
+            out.push_str(&format!("\n#image(height: 100%, \"{}\")\n", typed_node.url));
         } else {
             debug!("Unknown node type: {}", node.node_type.name);
         }
