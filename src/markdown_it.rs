@@ -116,6 +116,9 @@ pub fn markdown_to_typst_content(markdown: &str) -> String {
             //  or with title https://docs.rs/markdown-it/latest/markdown_it/generics/inline/full_link/index.html
             let typed_node: &Image = node.node_value.downcast_ref().unwrap();
             out.push_str(&format!("\n#image(height: 100%, \"{}\")\n", typed_node.url));
+
+            // Remove the image caption for the moment
+            node.children = vec!();
         } else {
             debug!("Unknown node type: {}", node.node_type.name);
         }
